@@ -2,7 +2,7 @@
 
 Main Project Repo & Tech Details https://github.com/tamago-labs/tamago-protocol
 
-## Deployment
+## v.0.1 Deployment
 
 ### Polygon (Chain id : 137) 
 
