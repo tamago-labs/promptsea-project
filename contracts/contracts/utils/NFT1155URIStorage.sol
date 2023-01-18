@@ -2,12 +2,12 @@
 
 pragma solidity 0.8.10;
 
-import "./SBT1155.sol";
+import "./NFT1155.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 
 
-abstract contract SBT1155URIStorage is SBT1155 {
+abstract contract NFT1155URIStorage is NFT1155 {
     using Strings for uint256;
 
     // Optional base URI

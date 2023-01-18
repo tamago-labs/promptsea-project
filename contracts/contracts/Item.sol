@@ -8,24 +8,23 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@opengsn/contracts/src/BaseRelayRecipient.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
-import "./utils/SBT1155.sol";
-import "./utils/SBT1155URIStorage.sol";
-import "./interfaces/IArtwork.sol";
+import "./utils/NFT1155.sol";
+import "./utils/NFT1155URIStorage.sol";
 
 /**
- * @title Novel NFT ERC-1155
+ * @title Hybrid Permission-based NFTs represent any creative works
  */
 
-contract Novel is
-    SBT1155,
-    SBT1155URIStorage,
+contract Item is
+    NFT1155,
+    NFT1155URIStorage,
     ReentrancyGuard,
     BaseRelayRecipient,
     Pausable
 {
+
     using Address for address;
     using SafeERC20 for IERC20;
 
@@ -34,78 +33,95 @@ contract Novel is
         ADMIN
     }
 
-    struct Page {
-        bytes32 root;
-        uint256 artworkId;
-        bool active;
+    enum TokenType {
+        ERC20,
+        ETHER
     }
 
+    // enum ContentType {
+    //     ART,
+    //     BOOK,
+    //     AUDIO,
+    //     VIDEO
+    // }
+
     struct Price {
+        TokenType tokenType;
         address asset;
-        uint256 amount;
+        uint256 tokenIdOrAmount;
+    }
+
+    struct Token {
+        Price price;
+        // ContentType contentType; 
+        uint256 currentSupply;
+        uint256 maxSupply; // can't be changed
     }
 
     // maps to the owner of each token ID
     mapping(uint256 => address) public tokenOwners;
     uint256 public tokenOwnerCount;
-    // pages
-    mapping(uint256 => mapping(uint8 => Page)) private pages;
-    // prices
-    mapping(uint256 => Price) private prices;
-    // maps to lock / unlock states
-    mapping(uint256 => bool) public lockable;
+    // token data
+    mapping(uint256 => Token) public tokens;
     // ACL
     mapping(address => Role) private permissions;
     // Dev address
     address public devAddress;
     // For the platform
     uint256 public platformFee;
-    // Fot the artwork creators
-    uint256 public creatorPayoutFee;
-    // Artwork NFT contract
-    IArtwork public artwork;
-
-    // ETHER ADDRESS
-    address constant ETHER_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+    // maps to lock / unlock states
+    mapping(uint256 => bool) public lockable;
 
     event Authorised(uint256 indexed tokenId, address owner);
+
     event Sold(
+        uint256 tokenId,
         address tokenAddress,
-        uint256 amount,
-        uint256 totalWriter,
-        uint256 totalPayout
+        uint256 amount
     );
-    event Withdrawn( address tokenAddress,address indexed toAddress, uint256 amount);
 
-    constructor(address _forwarder, address _artwork) public {
+    constructor(address _forwarder) {
         _setTrustedForwarder(_forwarder);
-
-        permissions[_msgSender()] = Role.ADMIN;
-
-        artwork = IArtwork(_artwork);
 
         devAddress = _msgSender();
 
         // Set fees
         platformFee = 1000; // 10%
-        creatorPayoutFee = 3000; // 30%
     }
 
     /// @notice check token price for the given token ID
     function tokenPrice(
         uint256 _tokenId
-    ) external view returns (address, uint256) {
-        return ( prices[_tokenId].asset, prices[_tokenId].amount);
+    ) external view returns (TokenType, address , uint256) {
+        return ( tokens[_tokenId].price.tokenType, tokens[_tokenId].price.asset, tokens[_tokenId].price.tokenIdOrAmount);
     }
+
+    /// @notice check token's current supply for the given token ID
+    function tokenSupply(uint256 _tokenId) external view returns (uint256) {
+        return ( tokens[_tokenId].currentSupply );
+    }
+
+    /// @notice check token's max supply for the given token ID
+    function tokenMaxSupply(uint256 _tokenId) external view returns (uint256) {
+        return (  tokens[_tokenId].maxSupply );
+    }
+
+    /// @notice check token's content type for the given ID
+    // function tokenContenttype(uint256 _tokenId) external view returns (ContentType) {
+    //     return (  tokens[_tokenId].contentType );
+    // }
 
     /// @notice authorise to issue a token
     function authorise(
         string memory _tokenURI,
         uint256 _initialAmount,
+        TokenType _priceTokenType,
         address _priceAsset,
-        uint256 _priceValue
+        uint256 _priceTokenIdOrAmount,
+        uint256 _maxSupply
     ) external nonReentrant whenNotPaused {
-        require(_initialAmount > 0, "Initial amount must be greater than zero");
+        require(_initialAmount > 0, "Initial Amount must be greater than zero");
+        require(_maxSupply >= _initialAmount,"Max Supply should be greater then Initial Amount");
         tokenOwnerCount += 1;
         tokenOwners[tokenOwnerCount] = _msgSender();
 
@@ -116,8 +132,13 @@ contract Novel is
         lockable[tokenOwnerCount] = true;
 
         // set the price
-        prices[tokenOwnerCount].asset = _priceAsset;
-        prices[tokenOwnerCount].amount = _priceValue;
+        tokens[tokenOwnerCount].price.asset = _priceAsset;
+        tokens[tokenOwnerCount].price.tokenIdOrAmount = _priceTokenIdOrAmount;
+        tokens[tokenOwnerCount].price.tokenType = _priceTokenType;
+
+        // set other params
+        tokens[tokenOwnerCount].maxSupply = _maxSupply;
+        tokens[tokenOwnerCount].currentSupply = _initialAmount; 
 
         emit Authorised(tokenOwnerCount, _msgSender());
     }
@@ -132,41 +153,28 @@ contract Novel is
         _setURI(_tokenId, _tokenURI);
     }
 
-    /// @notice set the token content (only be called by the token owner)
-    function setPages(
-        uint256 _tokenId,
-        uint8 _pageIdStart,
-        bytes32[] memory _roots,
-        uint256[] memory _artworkIds
-    ) external nonReentrant whenNotPaused {
-        require(tokenOwners[_tokenId] == _msgSender(), "Not authorised to set");
-        for (uint8 i = _pageIdStart; i < _roots.length; i++) {
-            pages[_tokenId][i].root = _roots[i];
-            pages[_tokenId][i].artworkId = _artworkIds[i];
-            pages[_tokenId][i].active = true;
-        }
-    }
-
-    /// @notice get the merkle-root from the given token, page
-    function getPageRoot(uint256 _tokenId, uint8 _pageId) external view returns (bytes32) {
-        return pages[_tokenId][_pageId].root;
-    }
-
-    /// @notice get the artwork from the given token
-    function getPageArtwork(uint256 _tokenId, uint8 _pageId) external view returns (uint256) {
-        return pages[_tokenId][_pageId].artworkId;
-    }
-
     /// @notice set the token price (only be called by the token owner)
     function setTokenPrice(
         uint256 _tokenId,
+        TokenType _priceType,
         address _priceAsset,
-        uint256 _priceValue
+        uint256 _priceTokenIdOrAmount
     ) external nonReentrant whenNotPaused {
         require(tokenOwners[_tokenId] == _msgSender(), "Not authorised to set");
 
-        prices[_tokenId].asset = _priceAsset;
-        prices[_tokenId].amount = _priceValue;
+        tokens[_tokenId].price.tokenType = _priceType;
+        tokens[_tokenId].price.asset = _priceAsset;
+        tokens[_tokenId].price.tokenIdOrAmount = _priceTokenIdOrAmount;
+    }
+
+    /// @notice transfer token owner
+    function transferTokenOwner(
+        uint256 _tokenId,
+        address _newOwnerAddress
+    ) external nonReentrant whenNotPaused {
+        require(tokenOwners[_tokenId] == _msgSender(), "Not authorised to transfer");
+
+        tokenOwners[_tokenId] = _newOwnerAddress;
     }
 
     /// @notice mint tokens
@@ -180,25 +188,22 @@ contract Novel is
         uint256 _value,
         bytes memory _data
     ) external nonReentrant whenNotPaused {
+        require(tokens[_tokenId].maxSupply >= (tokens[_tokenId].currentSupply + _value),"Max Supply Exceeded");
+        
         address tokenOwner = tokenOwners[_tokenId];
+        tokens[_tokenId].currentSupply += _value;
 
         if (tokenOwner == _msgSender()) {
             // free mint for the owner
             _mint(_to, _tokenId, _value, _data);
         } else {
-            address priceAsset = prices[_tokenId].asset;
-            uint256 priceAmount = prices[_tokenId].amount;
+            address priceAsset = tokens[_tokenId].price.asset;
+            uint256 priceAmount = tokens[_tokenId].price.tokenIdOrAmount;
 
-            require(priceAsset != ETHER_ADDRESS, "ETHER is not support here");
+            require(tokens[_tokenId].price.tokenType == TokenType.ERC20, "Only ERC20 here");
             require(_value == 1, "One token only");
 
             // only one token is minted
-
-            uint256 payoutValue;
-
-            if (creatorPayoutFee != 0) {
-                payoutValue = (priceAmount * (creatorPayoutFee)) / (10000);
-            }
 
             // taking platform fees
             if (platformFee != 0) {
@@ -214,13 +219,13 @@ contract Novel is
             // Locking in the contract until Admin releases it
             IERC20(priceAsset).safeTransferFrom(
                 _msgSender(),
-                address(this),
+                tokenOwner,
                 priceAmount
             );
 
             _mint(_to, _tokenId, 1, _data);
 
-            emit Sold(priceAsset, prices[_tokenId].amount, priceAmount , payoutValue);
+            emit Sold(_tokenId, priceAsset, priceAmount);
         }
     }
 
@@ -233,22 +238,18 @@ contract Novel is
     ) external payable nonReentrant whenNotPaused {
         require(tokenOwners[_tokenId] != _msgSender(), "Owner is not allowed");
         require(
-            prices[_tokenId].asset == ETHER_ADDRESS,
+            tokens[_tokenId].price.tokenType == TokenType.ETHER,
             "PriceAsset must be ETH"
         );
         require(_value == 1, "One token only");
+        require(tokens[_tokenId].maxSupply >= (tokens[_tokenId].currentSupply + _value),"Max Supply Exceeded");
 
         // only one token is minted
         uint256 amount = msg.value;
-        uint256 priceAmount = prices[_tokenId].amount;
+        uint256 priceAmount = tokens[_tokenId].price.tokenIdOrAmount;
+        tokens[_tokenId].currentSupply += _value;
 
         require( amount == priceAmount , "Invalid amount");
-
-        uint256 payoutValue;
-
-        if (creatorPayoutFee != 0) {
-            payoutValue = (priceAmount * (creatorPayoutFee)) / (10000);
-        }
 
         // taking platform fees
         if (platformFee != 0) {
@@ -258,9 +259,12 @@ contract Novel is
             priceAmount -= fee;
         }
 
+        (bool success, ) = tokenOwners[_tokenId].call{value: priceAmount}("");
+        require(success, "Failed to send Ether to creator");
+
         _mint(_to, _tokenId, 1, _data);
 
-        emit Sold(ETHER_ADDRESS, prices[_tokenId].amount, priceAmount ,payoutValue);
+        emit Sold( _tokenId, 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE, priceAmount);
     }
 
     /// @notice burn tokens
@@ -281,30 +285,10 @@ contract Novel is
         public
         view
         virtual
-        override(SBT1155, SBT1155URIStorage)
+        override(NFT1155, NFT1155URIStorage)
         returns (string memory)
     {
-        return SBT1155URIStorage.uri(tokenId);
-    }
-
-    /// @notice reveal a word by given proof
-    /// @param _proof proof generated off-chain
-    /// @param _tokenId token ID
-    /// @param _index index of the word
-    /// @param _word word to check
-    function reveal(
-        bytes32[] memory _proof,
-        uint256 _tokenId,
-        uint8 _pageId,
-        uint256 _index,
-        string memory _word
-    ) external view returns (bool) {
-        bool holded = false;
-        if (balanceOf(_msgSender(), _tokenId) > 0) {
-            holded = true;
-        }
-        bytes32 leaf = keccak256(abi.encodePacked(holded, _index, _word));
-        return MerkleProof.verify(_proof, pages[_tokenId][_pageId].root, leaf);
+        return NFT1155URIStorage.uri(tokenId);
     }
 
     /// @notice lock the token to not be transfered
@@ -317,12 +301,6 @@ contract Novel is
     /// @param tokenId token ID
     function unlock(uint256 tokenId) external onlyAdmin {
         lockable[tokenId] = false;
-    }
-
-    /// @notice set a new artwork contract
-    /// @param _address artwork contract address
-    function setArtwork(address _address) external onlyAdmin {
-        artwork = IArtwork(_address);
     }
 
     // update dev address
@@ -357,8 +335,6 @@ contract Novel is
         onlyAdmin
     {
         IERC20(_tokenAddress).safeTransfer(_toAddress, _amount);
-
-        emit Withdrawn( _tokenAddress, _toAddress, _amount );
     }
 
     // widthdraw ETH
@@ -369,30 +345,14 @@ contract Novel is
     {
         (bool sent, ) = _toAddress.call{value: _amount}("");
         require(sent, "Failed to send Ether");
-
-        emit Withdrawn(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE, _toAddress, _amount);
     }
 
     // update fees
-    function setFees(uint256 _platformFee, uint256 _creatorPayoutFee)
+    function setFees(uint256 _platformFee)
         external
         onlyAdmin
     {
         platformFee = _platformFee;
-        creatorPayoutFee = _creatorPayoutFee;
-    }
-
-    function versionRecipient() public pure override returns (string memory) {
-        return "2.2.5";
-    }
-
-    function _msgSender()
-        internal
-        view
-        override(Context, BaseRelayRecipient)
-        returns (address sender)
-    {
-        sender = BaseRelayRecipient._msgSender();
     }
 
     function _msgData()
@@ -410,6 +370,19 @@ contract Novel is
             "Caller is not the admin"
         );
         _;
+    }
+
+    function versionRecipient() public pure override returns (string memory) {
+        return "2.2.5";
+    }
+
+    function _msgSender()
+        internal
+        view
+        override(Context, BaseRelayRecipient)
+        returns (address sender)
+    {
+        sender = BaseRelayRecipient._msgSender();
     }
 
     function _beforeTokenTransfer(
@@ -438,4 +411,5 @@ contract Novel is
             }
         }
     }
+
 }

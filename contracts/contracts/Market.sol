@@ -9,14 +9,19 @@ import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "./Eligibility.sol";
 import "@opengsn/contracts/src/BaseRelayRecipient.sol";
 
 /**
- * @title P2P Prompt Marketplace forked from Tamago P2P Marketplace
+ * @title Secondary P2P Marketplace for Hybrid Permission-based NFTs
  */
 
-contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRecipient, Pausable {
+contract Market is
+    ReentrancyGuard,
+    ERC1155Holder,
+    BaseRelayRecipient,
+    Pausable
+{
+
     using Address for address;
     using SafeERC20 for IERC20;
 
@@ -38,7 +43,9 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
         uint256 tokenValue;
         TokenType tokenType;
         address owner;
-        bytes32 root; // Merkle Tree's root
+        address pairAssetAddress;
+        uint256 pairIdOrAmount;
+        TokenType pairTokenType;
         bool active;
         bool ended;
     }
@@ -50,27 +57,28 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     // Dev address
     address public devAddress;
     // Order's IPFS CID => Order
-    mapping(string => Order) public orders;
+    mapping(uint256 => Order) public orders;
+    uint256 public orderIdCount;
     // Max. orders can be executed at a time
     uint256 maxBatchOrders;
+    // ETHER ADDRESS
+    address constant ETHER_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
     event OrderCreated(
         address indexed owner,
-        string cid,
+        uint256 orderId,
         address assetAddress,
         uint256 tokenId,
         uint256 tokenValue,
-        TokenType tokenType,
-        bytes32 root
+        TokenType tokenType
     );
 
-    event OrderCanceled(string cid, address indexed owner);
-    event OrderEnded(string cid, address indexed owner);
-    event Swapped(string cid, address indexed fromAddress, address toAddress);
+    event OrderCanceled(uint256 orderId, address indexed owner);
+    event OrderEnded(uint256 orderId, address indexed owner);
+    event Swapped(uint256 orderId, address indexed fromAddress, address toAddress);
     event Withdrawn( address tokenAddress,address indexed toAddress, uint256 amount);
-    event Credited( address tokenAddress, address indexed toAddress, uint256 amount );
 
-    constructor(uint256 _chainId, address _forwarder) Eligibility(_chainId) {
+    constructor(address _forwarder) {
         maxBatchOrders = 100;
 
         permissions[_msgSender()] = Role.ADMIN;
@@ -84,30 +92,33 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     }
 
     /// @notice create an order
-    /// @param _cid IPFS HASH CID for the order
+    /// @param _orderId ID for the order
     /// @param _assetAddress NFT contract address being listed
     /// @param _tokenId NFT token ID being listed
     /// @param _tokenValue total NFT amount being listed
     /// @param _type Token type that want to swap
-    /// @param _root in the barter list in merkle tree root
+    /// @param _pairAssetAddress pair asset address to be traded
+    /// @param _pairIdOrAmount amount or id of pair asset
+    /// @param _pairTokenType the type of pair asset
     function create(
-        string memory _cid,
+        uint256 _orderId,
         address _assetAddress,
         uint256 _tokenId,
         uint256 _tokenValue,
         TokenType _type,
-        bytes32 _root
+        address _pairAssetAddress,
+        uint256 _pairIdOrAmount,
+        TokenType _pairTokenType
     ) external nonReentrant whenNotPaused {
-        _create(_cid, _assetAddress, _tokenId, _tokenValue, _type, _root);
+        _create(_orderId, _assetAddress, _tokenId, _tokenValue, _type, _pairAssetAddress, _pairIdOrAmount, _pairTokenType);
 
         emit OrderCreated(
             _msgSender(),
-            _cid,
+            _orderId,
             _assetAddress,
             _tokenId,
             _tokenValue,
-            _type,
-            _root
+            _type
         );
     }
 
@@ -115,16 +126,19 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     /// @param _cids ID for the order
     /// @param _assetAddresses NFT contract address being listed
     /// @param _tokenIds NFT token ID being listed
-    /// @param _tokenValues NFT token amount being listed
-    /// @param _types NFT's being listed ERC1155 flag
-    /// @param _roots in the barter list in merkle tree root
+    /// @param _tokenValues NFT token amount being listed 
+    /// @param _pairAssetAddress pair asset address to be traded
+    /// @param _pairIdOrAmount amount or id of pair asset
+    /// @param _pairTokenType the type of pair asset
     function createBatch(
-        string[] calldata _cids,
+        uint256[] calldata _cids,
         address[] calldata _assetAddresses,
         uint256[] calldata _tokenIds,
         uint256[] calldata _tokenValues,
-        TokenType[] calldata _types,
-        bytes32[] calldata _roots
+        // TokenType[] calldata _types,
+        address _pairAssetAddress,
+        uint256 _pairIdOrAmount,
+        TokenType _pairTokenType
     ) external nonReentrant whenNotPaused {
         require(maxBatchOrders >= _cids.length, "Exceed batch size");
 
@@ -134,8 +148,10 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
                 _assetAddresses[i],
                 _tokenIds[i],
                 _tokenValues[i],
-                _types[i],
-                _roots[i]
+                TokenType.ERC1155, // only ERC1155 is allowed
+                _pairAssetAddress,
+                _pairIdOrAmount,
+                _pairTokenType
             );
 
             emit OrderCreated(
@@ -144,15 +160,14 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
                 _assetAddresses[i],
                 _tokenIds[i],
                 _tokenValues[i],
-                _types[i],
-                _roots[i]
+                TokenType.ERC1155
             );
         }
     }
 
     /// @notice cancel the order
     /// @param _cid ID that want to cancel
-    function cancel(string memory _cid) external nonReentrant whenNotPaused {
+    function cancel(uint256 _cid) external nonReentrant whenNotPaused {
         _cancel(_cid);
 
         emit OrderCanceled(_cid, _msgSender());
@@ -160,7 +175,7 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
 
     /// @notice cancel multiple orders
     /// @param _cids ID that want to cancel
-    function cancelBatch(string[] calldata _cids) external nonReentrant whenNotPaused {
+    function cancelBatch(uint256[] calldata _cids) external nonReentrant whenNotPaused {
         for (uint256 i = 0; i < _cids.length; i++) {
             _cancel(_cids[i]);
             emit OrderCanceled(_cids[i], _msgSender());
@@ -169,113 +184,75 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
 
     /// @notice buy the NFT from the given order ID
     /// @param _cid ID for the order
-    /// @param _assetAddress NFT or ERC20 contract address want to swap
-    /// @param _tokenIdOrAmount NFT's token ID or ERC20 token amount want to swap
-    /// @param _type Token type that want to swap
-    /// @param _proof the proof generated from off-chain
     function swap(
-        string memory _cid,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        TokenType _type,
-        bytes32[] memory _proof
+        uint256 _cid
     ) external validateId(_cid) nonReentrant whenNotPaused {
-        _swap(_cid, _assetAddress, _tokenIdOrAmount, _type, _proof);
+        _swap(_cid);
 
         emit Swapped(_cid, orders[_cid].owner , _msgSender());
     }
 
     /// @notice buy the NFT from the given order ID with ETH
-    /// @param _cid ID for the order
-    /// @param _proof the proof generated from off-chain
-    function swapWithEth(string memory _cid, bytes32[] memory _proof)
+    /// @param _cid ID for the order 
+    function swapWithEth(uint256 _cid)
         external
         payable
         validateId(_cid)
         nonReentrant
         whenNotPaused
     {
-        _swapWithEth(_cid, _proof);
+        _swapWithEth(_cid);
 
         emit Swapped(_cid, orders[_cid].owner , _msgSender());
     }
 
     /// @notice buy the NFT from the fiat (only admin can proceed)
     /// @param _cid ID for the order
-    /// @param _assetAddress NFT or ERC20 contract address want to swap
-    /// @param _tokenIdOrAmount NFT's token ID or ERC20 token amount want to swap
-    /// @param _proof the proof generated from off-chain
     function swapWithFiat(
-        string memory _cid,
-        address _toAddress,
-        address _assetAddress,
-        uint256 _tokenIdOrAmount,
-        bytes32[] memory _proof
+        uint256 _cid,
+        address _toAddress
     ) external onlyAdmin validateId(_cid) nonReentrant {
-        _swapWithFiat(_cid, _toAddress, _assetAddress, _tokenIdOrAmount, _proof);
+        _swapWithFiat(_cid, _toAddress);
 
-        emit Swapped(_cid, orders[_cid].owner , _msgSender());
+        emit Swapped(_cid, orders[_cid].owner , _toAddress);
     }
 
     /// @notice buy the NFT in batch
     /// @param _cids ID for the order
-    /// @param _assetAddresses NFT or ERC20 contract address want to swap
-    /// @param _tokenIdOrAmounts NFT's token ID or ERC20 token amount want to swap
-    /// @param _types Token type that want to swap
-    /// @param _proofs the proof generated from off-chain
     function swapBatch(
-        string[] calldata _cids,
-        address[] calldata _assetAddresses,
-        uint256[] calldata _tokenIdOrAmounts,
-        TokenType[] calldata _types,
-        bytes32[][] calldata _proofs
+        uint256[] calldata _cids
     ) external validateIds(_cids) nonReentrant whenNotPaused {
         for (uint256 i = 0; i < _cids.length; i++) {
             _swap(
-                _cids[i],
-                _assetAddresses[i],
-                _tokenIdOrAmounts[i],
-                _types[i],
-                _proofs[i]
+                _cids[i]
             );
             emit Swapped(_cids[i], orders[_cids[i]].owner , _msgSender());
         }
     }
 
     /// @notice buy the NFT in batch
-    /// @param _cids ID for the order
-    /// @param _proofs the proof generated from off-chain
+    /// @param _cids ID for the order 
     function swapBatchWithEth(
-        string[] calldata _cids,
-        bytes32[][] calldata _proofs
+        uint256[] calldata _cids
     ) external validateIds(_cids) nonReentrant whenNotPaused {
         for (uint256 i = 0; i < _cids.length; i++) {
-            _swapWithEth(_cids[i], _proofs[i]);
+            _swapWithEth(_cids[i] );
             emit Swapped(_cids[i], orders[_cids[i]].owner , _msgSender());
         }
     }
 
     /// @notice buy the NFT in batch from the fiat (only admin can proceed)
     /// @param _cids ID for the order
-    /// @param _assetAddresses NFT or ERC20 contract address want to swap
-    /// @param _tokenIdOrAmounts NFT's token ID or ERC20 token amount want to swap
-    /// @param _proofs the proof generated from off-chain
     function swapBatchWithFiat(
-        string[] calldata _cids,
-        address _toAddress,
-        address[] calldata _assetAddresses,
-        uint256[] calldata _tokenIdOrAmounts,
-        bytes32[][] calldata _proofs
+        uint256[] calldata _cids,
+        address _toAddress
     ) external onlyAdmin validateIds(_cids) nonReentrant {
         for (uint256 i = 0; i < _cids.length; i++) {
             _swapWithFiat(
                 _cids[i],
-                _toAddress,
-                _assetAddresses[i],
-                _tokenIdOrAmounts[i],
-                _proofs[i]
+                _toAddress
             );
-            emit Swapped(_cids[i], orders[_cids[i]].owner , _msgSender());
+            emit Swapped(_cids[i], orders[_cids[i]].owner , _toAddress);
         }
     }
 
@@ -341,7 +318,6 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     }
 
     // INTERNAL FUNCTIONS
-
     modifier onlyAdmin() {
         require(
             permissions[_msgSender()] == Role.ADMIN,
@@ -350,7 +326,7 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
         _;
     }
 
-    modifier validateId(string memory _orderId) {
+    modifier validateId(uint256 _orderId) {
         require(orders[_orderId].active == true, "Given ID is invalid");
         require(
             orders[_orderId].ended == false,
@@ -359,7 +335,7 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
         _;
     }
 
-    modifier validateIds(string[] memory _orderIds) {
+    modifier validateIds(uint256[] memory _orderIds) {
         require(maxBatchOrders >= _orderIds.length, "Exceed batch size");
         for (uint256 i = 0; i < _orderIds.length; i++) {
             require(orders[_orderIds[i]].active == true, "Given ID is invalid");
@@ -372,12 +348,14 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     }
 
     function _create(
-        string memory _cid,
+        uint256 _cid,
         address _assetAddress,
         uint256 _tokenId,
         uint256 _tokenValue,
         TokenType _type,
-        bytes32 _root
+        address _pairAssetAddress,
+        uint256 _pairIdOrAmount,
+        TokenType _pairTokenType
     ) internal {
         require(orders[_cid].active == false, "Given ID is occupied");
         require(_tokenValue > 0, "Invalid Token Value");
@@ -387,11 +365,15 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
         orders[_cid].tokenId = _tokenId;
         orders[_cid].tokenValue = _tokenValue;
         orders[_cid].tokenType = _type;
-        orders[_cid].root = _root;
+        orders[_cid].pairAssetAddress = _pairAssetAddress;
+        orders[_cid].pairIdOrAmount = _pairIdOrAmount;
+        orders[_cid].pairTokenType = _pairTokenType;
         orders[_cid].owner = _msgSender();
+
+        orderIdCount += 1;
     }
 
-    function _cancel(string memory _orderId) internal {
+    function _cancel(uint256 _orderId) internal {
         require(orders[_orderId].active == true, "Given ID is invalid");
         require(orders[_orderId].owner == _msgSender(), "You are not the owner");
 
@@ -399,27 +381,19 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     }
 
     function _swap(
-        string memory _orderId,
-        address _assetAddress,
-        uint256 _tokenId,
-        TokenType _type,
-        bytes32[] memory _proof
+        uint256 _orderId
     ) internal {
+ 
+        TokenType _type = orders[_orderId].pairTokenType;
+
         require(_type != TokenType.ETHER, "ETHER is not support");
         require(_type != TokenType.FIAT, "Fiat is not support");
-        require(
-            _eligibleToSwap(
-                _orderId,
-                _assetAddress,
-                _tokenId,
-                orders[_orderId].root,
-                _proof
-            ) == true,
-            "The caller is not eligible to claim the NFT"
-        );
 
+        address _assetAddress = orders[_orderId].pairAssetAddress;
+        uint256 _tokenId = orders[_orderId].pairIdOrAmount; 
+        
         // taking NFT / ERC-20
-        _take(_assetAddress, _tokenId, _type, orders[_orderId].owner);
+        _take(_assetAddress, _tokenId,  _type , orders[_orderId].owner);
 
         // giving NFT
         _give(
@@ -439,14 +413,14 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
 
     }
 
-    function _swapWithEth(string memory _orderId, bytes32[] memory _proof)
+    function _swapWithEth(uint256 _orderId)
         internal
     {
-        require(
-            _eligibleToSwapWithEth(_orderId, orders[_orderId].root, _proof) ==
-                true,
-            "The caller is not eligible to claim the NFT"
-        );
+
+        TokenType _type = orders[_orderId].pairTokenType;
+        require(_type == TokenType.ETHER, "ETHER only");
+
+        require( msg.value == orders[_orderId].pairIdOrAmount , "Invalid amount");
 
         // taking ETH
 
@@ -461,9 +435,8 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
         }
 
         // lock in the contract until admin release
-        // (bool sent, ) = orders[_orderId].owner.call{value: amount}("");
-        // require(sent, "Failed to send Ether");
-        emit Credited(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE , orders[_orderId].owner, amount);
+        (bool sent, ) = orders[_orderId].owner.call{value: amount}("");
+        require(sent, "Failed to send Ether");
 
         // giving NFT
         _give(
@@ -483,22 +456,12 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     }
 
     function _swapWithFiat(
-        string memory _orderId,
-        address _toAddress,
-        address _assetAddress,
-        uint256 _tokenId,
-        bytes32[] memory _proof
+        uint256 _orderId,
+        address _toAddress
     ) internal {
-        require(
-            _eligibleToSwap(
-                _orderId,
-                _assetAddress,
-                _tokenId,
-                orders[_orderId].root,
-                _proof
-            ) == true,
-            "The caller is not eligible to claim the NFT"
-        );
+
+        TokenType _type = orders[_orderId].pairTokenType;
+        require(_type == TokenType.FIAT, "FIAT only");
 
         // giving NFT
         _give(
@@ -544,10 +507,9 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
                 );
                 amount -= fee;
             }
-            // Locking in the contract until Admin releases it
-            IERC20(_assetAddress).safeTransferFrom(_msgSender(), address(this), amount);
 
-            emit Credited(_assetAddress, _to, amount);
+            IERC20(_assetAddress).safeTransferFrom(_msgSender(), _to, amount);
+
         }
     }
 
@@ -633,5 +595,6 @@ contract Marketplace is ReentrancyGuard, ERC1155Holder, Eligibility, BaseRelayRe
     receive() external payable {}
 
     fallback() external payable {}
+
 
 }

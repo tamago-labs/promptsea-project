@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 
-contract SBT1155 is Context, ERC165, IERC1155, IERC1155MetadataURI {
+contract NFT1155 is Context, ERC165, IERC1155, IERC1155MetadataURI {
     using Address for address;
 
     // Mapping from token ID to account balances
