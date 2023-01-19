@@ -12,7 +12,7 @@ Market | 0x838596631568713c2c7D3d7a1fFa44347e361550
 Item | 0x87Fa515e6EFF0F296914D472BE5512c3F70c47A3
 Paymaster | 0x2d357877E55697Cf30404aE835e0702648e75df6
 
-### BNB (Chain id : 137) 
+### BNB (Chain id : 56) 
 
 Contract Name | Contract Address 
 --- | --- 
