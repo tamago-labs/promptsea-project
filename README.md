@@ -19,6 +19,13 @@ Contract Name | Contract Address
 Market | 0xe0bdB97D7e1e1Cea6187B4e8e78C94089D0D4FFa
 Item | 0x2e10F5Eec7E02575792207cB71A9Cb1edae6E05d
 
+### BNB Testnet (Chain id : 97) 
+
+Contract Name | Contract Address 
+--- | --- 
+Market | 0x41E2a594FED1e1a8Aee12C7324D5e056B7Bd631D
+Item | 0x0Fb846e129E82E42F19965f96e032DB016a701C8
+
 ## v.0.1 Deployment
 
 ### Polygon (Chain id : 137) 
