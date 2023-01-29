@@ -9,7 +9,7 @@ Main Project Repo & Tech Details https://github.com/tamago-labs/tamago-protocol
 Contract Name | Contract Address 
 --- | --- 
 Market | 0x838596631568713c2c7D3d7a1fFa44347e361550
-Item | 0x1A30f791b06E31CF6d88549CB81ef6D9E6641B6F
+Item | 0x3c62f937B252080DE878a1f99ED9390cb8d36554
 Paymaster | 0x2d357877E55697Cf30404aE835e0702648e75df6
 
 ### BNB (Chain id : 56) 
