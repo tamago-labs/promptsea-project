@@ -85,6 +85,8 @@ contract Item is
 
         devAddress = _msgSender();
 
+        permissions[_msgSender()] = Role.ADMIN;
+
         // Set fees
         platformFee = 1000; // 10%
     }
