@@ -12,7 +12,7 @@ let charlie
 
 let mockUsdc
 
-describe("Item", () => {
+describe("PromptNFT", () => {
 
     beforeEach(async () => {
 

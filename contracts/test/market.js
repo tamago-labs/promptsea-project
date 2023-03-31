@@ -18,7 +18,7 @@ let bob
 let dev
 
 
-describe("Market contract", () => {
+describe("PromptMarket", () => {
 
     beforeEach(async () => {
         [admin, alice, bob, relayer, dev] = await ethers.getSigners()
