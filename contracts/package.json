@@ -4,6 +4,7 @@
     "@opengsn/contracts": "2.2.5",
     "@openzeppelin/contracts": "^4.6.0",
     "@openzeppelin/contracts-ethereum-package": "^3.0.0",
+    "crypto-js": "^4.1.1",
     "dotenv": "^16.0.1",
     "keccak256": "^1.0.6",
     "merkletreejs": "^0.2.31"
