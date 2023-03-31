@@ -1,6 +1,24 @@
 # PromptSea
 
-https://docs.promptsea.io
+PromptSea is a set of components that extends traditional NFTs to include private data that can be shared with token holders. 
+
+- PromptNFT - A shared ERC1155 smart contract for NFT management
+- PropmtMarket - A secondary marketplace for trading PromptNFT tokens
+- PromptNetwork - A KMS to protect private data stored on public blockchain and IPFS networks
+
+More details on https://docs.promptsea.io
+
+## How To Test
+
+The smart contract on the repository is open source and has been developed using Hardhat. It can simply simulate all actions on the three components by running:
+
+```
+cd contracts
+npm install
+npx hardhat test
+```
+
+For testing, we're using the MockAPI for PromptNetwork to demonstrate, while the production API has been deployed and is running on AWS cloud, based on serverless architecture.
 
 ## Deployment
 
