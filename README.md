@@ -3,7 +3,7 @@
 PromptSea is a set of components that extends traditional NFTs to include private data that can be shared with token holders. 
 
 - PromptNFT - A shared ERC1155 smart contract for NFT management
-- PropmtMarket - A secondary marketplace for trading PromptNFT tokens
+- PromptMarket - A secondary marketplace for trading PromptNFT tokens
 - PromptNetwork - A KMS to protect private data stored on public blockchain and IPFS networks
 
 More details on https://docs.promptsea.io
