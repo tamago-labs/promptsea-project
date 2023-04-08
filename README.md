@@ -1,4 +1,4 @@
-# PromptSea
+# Move to monorepo --> https://github.com/tamago-labs/promptsea-protocol
 
 PromptSea is a set of components that extends traditional NFTs to include private data that can be shared with token holders. 
 
